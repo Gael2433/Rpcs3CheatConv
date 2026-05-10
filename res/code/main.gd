@@ -140,10 +140,7 @@ func _HexToInt(hex : String):
 		return hex.hex_to_int()
 func _IntToHex(param : int):
 	return str("%x" % param).to_upper()
-func _input(event: InputEvent) -> void:
-	if event != null:
-		if event.is_action_pressed("input_accept"):
-			_IncrementOffsetValue(1)
+
 func _CheatTextUpdate():
 	cheatText = str(_GetGameTitle()) + "@@@" + str(_GetCheatName()) + "@@@" + str(selectedValueType) + "@@@" + str(_ParseOffsetValue()) + "@@@@@@^^^"
 	TextOutput.text = str(cheatText)
