@@ -30,6 +30,8 @@ var cheatText : String
 @export var ButtonOffsetAdjustMinus16 : Button
 @export var ButtonOffsetAdjustMinus32 : Button
 @export var ButtonOffsetAdjustMinus64 : Button
+@export var PopupFileMenu : PopupMenu
+
 func _ready() -> void:
 	isReady = false
 	await _CliArgsRead()
@@ -62,21 +64,7 @@ func _ComponentsInit():
 	TextOutputButton.pressed.connect(_TextOutputButtonPressed)
 	ButtonReset.pressed.connect(button_reset_pressed)
 	ButtonExit.pressed.connect(button_exit_pressed)
-	ButtonOffsetAdjustPlus1.pressed.connect(button_offset_pressed_inc1)
-	ButtonOffsetAdjustPlus2.pressed.connect(button_offset_pressed_inc2)
-	ButtonOffsetAdjustPlus4.pressed.connect(button_offset_pressed_inc4)
-	ButtonOffsetAdjustPlus8.pressed.connect(button_offset_pressed_inc8)
-	ButtonOffsetAdjustPlus16.pressed.connect(button_offset_pressed_inc16)
-	ButtonOffsetAdjustPlus32.pressed.connect(button_offset_pressed_inc32)
-	ButtonOffsetAdjustPlus64.pressed.connect(button_offset_pressed_inc64)
-	ButtonOffsetAdjustMinus1.pressed.connect(button_offset_pressed_dec1)
-	ButtonOffsetAdjustMinus2.pressed.connect(button_offset_pressed_dec2)
-	ButtonOffsetAdjustMinus4.pressed.connect(button_offset_pressed_dec4)
-	ButtonOffsetAdjustMinus8.pressed.connect(button_offset_pressed_dec8)
-	ButtonOffsetAdjustMinus16.pressed.connect(button_offset_pressed_dec16)
-	ButtonOffsetAdjustMinus32.pressed.connect(button_offset_pressed_dec32)
-	ButtonOffsetAdjustMinus64.pressed.connect(button_offset_pressed_dec64)
-	
+	PopupFileMenu.index_pressed.connect(file_popup_menu_item_selected)
 func _ValueTypeButtonIncreasePressed():
 	selectedValueType += 1
 	_DebugLogWrite("_ValueTypeButtonIncreasePressed()::selectedValueType=" + str(selectedValueType), 0)
@@ -120,6 +108,27 @@ func _GetValueType():
 			return "Int64"
 		8:
 			return "Float32"
+func _GetValueTypeString(value_type : int):
+	value_type = clampi(value_type, 0, 8)
+	match value_type:
+		0:
+			return "UInt8"
+		1:
+			return "UInt16"
+		2:
+			return "UInt32"
+		3:
+			return "UInt64"
+		4:
+			return "Int8"
+		5:
+			return "Int16"
+		6:
+			return "Int32"
+		7:
+			return "Int64"
+		8:
+			return "Float32"
 func _GetCheatName():
 	return str(TextInputFieldCheatName.text)
 func _TextOutputButtonPressed():
@@ -140,7 +149,6 @@ func _HexToInt(hex : String):
 		return hex.hex_to_int()
 func _IntToHex(param : int):
 	return str("%x" % param).to_upper()
-
 func _CheatTextUpdate():
 	cheatText = str(_GetGameTitle()) + "@@@" + str(_GetCheatName()) + "@@@" + str(selectedValueType) + "@@@" + str(_ParseOffsetValue()) + "@@@@@@^^^"
 	TextOutput.text = str(cheatText)
@@ -171,6 +179,155 @@ func _DebugLogWrite(message : String, level : int):
 				printerr("[ERROR][" + str(timestamp) + "]::" + str(message))
 func _WindowUpdate():
 	get_window().content_scale_size = get_tree().root.size
+func _FileDialogOpen(open_mode : bool): # false = save, true = open
+	if open_mode:
+		var file_dialog : FileDialog = FileDialog.new()
+		file_dialog.use_native_dialog = true
+		file_dialog.add_filter("*.cht")
+		file_dialog.deleting_enabled = false
+		file_dialog.folder_creation_enabled = false
+		file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		file_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		file_dialog.name = "OpenFileDialog"
+		add_child.call_deferred(file_dialog)
+		await file_dialog.tree_entered
+		file_dialog.owner = get_tree().edited_scene_root
+		file_dialog.visible = true
+		return file_dialog
+	else:
+		var file_dialog : FileDialog = FileDialog.new()
+		file_dialog.use_native_dialog = true
+		file_dialog.add_filter("*.cht")
+		file_dialog.deleting_enabled = true
+		file_dialog.folder_creation_enabled = true
+		file_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+		file_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		file_dialog.name = "SaveFileDialog"
+		add_child.call_deferred(file_dialog)
+		await file_dialog.tree_entered
+		file_dialog.owner = get_tree().edited_scene_root
+		file_dialog.visible = true
+		return file_dialog
+func _CallOpenFileDialog():
+	var open_dialog : FileDialog = await _FileDialogOpen(true)
+	await open_dialog.file_selected
+	var selected_file : String = str(open_dialog.current_dir) + "/" + str(open_dialog.current_file)
+	open_dialog.queue_free()
+	await open_dialog.tree_exited
+	if !selected_file.is_empty():
+		_LoadFileCht(selected_file)
+func _LoadFileCht(path : String):
+	_DebugLogWrite("_LoadFileCht()::path=" + str(path), 0)
+	if !path.is_empty():
+		var cht_file : FileAccess = FileAccess.open(str(path), FileAccess.READ)
+		if cht_file != null:
+			_ParseFileCht(cht_file)
+func _ParseFileCht(file : FileAccess):
+	if file != null:
+		var header : PackedByteArray = file.get_buffer(5)
+		var header_len : int = header.size()
+		var header_hex : String = ""
+		if header_len == 5:
+			for i in range(header_len):
+				var value : String = _IntToHex(header[i])
+				if !value.is_empty():
+					header_hex += str(value)
+				i += 1
+				if i >= header_len:
+					break
+		# Check that file header is "5243485440" in Hex (RCHT@)
+		if header_hex == "5243485440":
+			_DebugLogWrite("_LoadFileCht()::Header OK", 0)
+			var file_version : PackedByteArray = file.get_buffer(2)
+			var file_version_major : int = file_version[0]
+			var file_version_minor : int = file_version[1]
+			_DebugLogWrite("_LoadFileCht()::CHT File Version: Major:" + str(file_version_major) + " Minor:" + str(file_version_minor), 0)
+		else:
+			_DebugLogWrite("_LoadFileCht()::Invalid file header! got:" + str(header_hex) + ", expected:5243485440", 1)
+			file.close()
+		# Get Game Title
+		var game_title : StringName = _FileChdReadBufferString(file, 256)
+		_DebugLogWrite("_LoadFileCht()::Got game title: " + str(game_title), 0)
+		# Get Cheat Name
+		var cheat_name : StringName = _FileChdReadBufferString(file, 256)
+		_DebugLogWrite("_LoadFileCht()::Got cheat name: " + str(cheat_name), 0)
+		# Get Value Type
+		var value_type : int = file.get_buffer(1)[0]
+		_DebugLogWrite("_LoadFileCht()::Got value type: " + str(_GetValueTypeString(value_type)), 0)
+		# Get Cheat Offset
+		#file.seek(file.get_position() - 1) # Hacky hack :3
+		var offset : String = _IntToHex(_FileChdReadBufferString(file, 256).to_int())
+		_DebugLogWrite("_LoadFileCht()::Got cheat offset: 0x0" + str(offset), 0)
+		# Apply values to UI
+		await _Reset()
+		TextInputField.text = str(game_title)
+		TextInputFieldCheatName.text = str(cheat_name)
+		TextInputFieldOffset.text = "0x0" + str(offset)
+		selectedValueType = clampi(value_type, 0, 8)
+		await _ValueTypeDisplayUpdate()
+		await _CheatTextUpdate()
+		file.close()
+func _FileChdReadBufferString(file : FileAccess, length : int):
+	var out_string : StringName = ""
+	var buf : PackedByteArray = file.get_buffer(length)
+	var buf_size : int = buf.size()
+	if buf_size > 0:
+		for i in range(buf_size):
+			var letter : String = _IntToHex(buf[i])
+			var letter_hex : String = str(letter)
+			if letter_hex == "24":
+				if _IntToHex(buf[i + 1]) == "24":
+					file.seek(file.get_position() - buf_size + i + 2) # Seek to end of found value.
+					break
+			out_string += letter
+			i += 1
+			if i >= buf_size:
+				break
+	return str(out_string.hex_decode().get_string_from_utf8())
+func _CallSaveFileDialog():
+	var save_dialog : FileDialog = await _FileDialogOpen(false)
+	await save_dialog.file_selected
+	var selected_file : String = str(save_dialog.current_dir) + "/" + str(save_dialog.current_file)
+	save_dialog.queue_free()
+	await save_dialog.tree_exited
+	if !selected_file.is_empty():
+		_SaveFileChd(selected_file)
+func _SaveFileChd(path : String):
+	if !path.is_empty():
+		var file_access : FileAccess = FileAccess.open(str(path), FileAccess.WRITE)
+		if file_access != null:
+			_DebugLogWrite(str(file_access.get_path()), 0)
+			# Write file magic
+			_FileChtWriteDataArray(file_access, "RCHT@".to_utf8_buffer(), false)
+			# Write file version
+			_FileChtWriteVersion(file_access)
+			# Write Game Title
+			_FileChtWriteDataArray(file_access, str(TextInputField.text).to_utf8_buffer(), true)
+			# Write Cheat Name
+			_FileChtWriteDataArray(file_access, str(TextInputFieldCheatName.text).to_utf8_buffer(), true)
+			# Write Value Type
+			_FileChtWriteValueType(file_access)
+			# Write Offset
+			_FileChtWriteDataArray(file_access, str(_ParseOffsetValue()).to_utf8_buffer(), true)
+			# Close File
+			file_access.close()
+func _FileChtWriteDataArray(file : FileAccess, in_buf : PackedByteArray, add_terminator : bool):
+	var buf_length : int = in_buf.size()
+	if file != null and buf_length > 0:
+		if add_terminator:
+			in_buf.append_array("$$".to_utf8_buffer())
+		file.store_buffer(in_buf)
+func _FileChtWriteVersion(file : FileAccess):
+	if file != null:
+		var buf : PackedByteArray
+		buf.append(01)
+		buf.append(00)
+		file.store_buffer(buf)
+func _FileChtWriteValueType(file : FileAccess):
+	if file != null:
+		var buf : PackedByteArray
+		buf.append(selectedValueType)
+		file.store_buffer(buf)
 # Callable Functions
 func on_tree_exiting():
 	_DebugLogWrite("on_tree_exiting()", 0)
@@ -183,20 +340,6 @@ func on_tree_exiting():
 	TextOutputButton.pressed.disconnect(_TextOutputButtonPressed)
 	ButtonReset.pressed.disconnect(button_reset_pressed)
 	ButtonExit.pressed.disconnect(button_exit_pressed)
-	ButtonOffsetAdjustPlus1.pressed.disconnect(button_offset_pressed_inc1)
-	ButtonOffsetAdjustPlus2.pressed.disconnect(button_offset_pressed_inc2)
-	ButtonOffsetAdjustPlus4.pressed.disconnect(button_offset_pressed_inc4)
-	ButtonOffsetAdjustPlus8.pressed.disconnect(button_offset_pressed_inc8)
-	ButtonOffsetAdjustPlus16.pressed.disconnect(button_offset_pressed_inc16)
-	ButtonOffsetAdjustPlus32.pressed.disconnect(button_offset_pressed_inc32)
-	ButtonOffsetAdjustPlus64.pressed.disconnect(button_offset_pressed_inc64)
-	ButtonOffsetAdjustMinus1.pressed.disconnect(button_offset_pressed_dec1)
-	ButtonOffsetAdjustMinus2.pressed.disconnect(button_offset_pressed_dec2)
-	ButtonOffsetAdjustMinus4.pressed.disconnect(button_offset_pressed_dec4)
-	ButtonOffsetAdjustMinus8.pressed.disconnect(button_offset_pressed_dec8)
-	ButtonOffsetAdjustMinus16.pressed.disconnect(button_offset_pressed_dec16)
-	ButtonOffsetAdjustMinus32.pressed.disconnect(button_offset_pressed_dec32)
-	ButtonOffsetAdjustMinus64.pressed.disconnect(button_offset_pressed_dec64)
 	_DebugLogWrite("ProgramExit()", 0)
 func game_title_text_changed(_new_text : String):
 	await _CheatTextUpdate()
@@ -210,31 +353,12 @@ func button_reset_pressed():
 	_Reset()
 func button_exit_pressed():
 	get_tree().quit(0)
-func button_offset_pressed_inc1():
-	_IncrementOffsetValue(1)
-func button_offset_pressed_inc2():
-	_IncrementOffsetValue(2)
-func button_offset_pressed_inc4():
-	_IncrementOffsetValue(4)
-func button_offset_pressed_inc8():
-	_IncrementOffsetValue(8)
-func button_offset_pressed_inc16():
-	_IncrementOffsetValue(16)
-func button_offset_pressed_inc32():
-	_IncrementOffsetValue(32)
-func button_offset_pressed_inc64():
-	_IncrementOffsetValue(64)
-func button_offset_pressed_dec1():
-	_IncrementOffsetValue(-1)
-func button_offset_pressed_dec2():
-	_IncrementOffsetValue(-2)
-func button_offset_pressed_dec4():
-	_IncrementOffsetValue(-4)
-func button_offset_pressed_dec8():
-	_IncrementOffsetValue(-8)
-func button_offset_pressed_dec16():
-	_IncrementOffsetValue(-16)
-func button_offset_pressed_dec32():
-	_IncrementOffsetValue(-32)
-func button_offset_pressed_dec64():
-	_IncrementOffsetValue(-64)
+func button_offset_adjust_pressed(stride : int):
+	if stride != 0:
+		_IncrementOffsetValue(stride)
+func file_popup_menu_item_selected(index : int):
+	if index != -1:
+		if index == 0:
+			_CallOpenFileDialog()
+		elif index == 1:
+			_CallSaveFileDialog()
