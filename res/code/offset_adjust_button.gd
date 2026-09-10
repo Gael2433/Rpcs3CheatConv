@@ -4,7 +4,7 @@ var main : Main
 signal offsetAdjustButtonPressed(amount : int)
 
 func _ready() -> void:
-	main = get_parent()
+	main = get_parent().get_parent()
 	if main != null:
 		tree_exiting.connect(on_tree_exiting)
 		offsetAdjustButtonPressed.connect(main.button_offset_adjust_pressed)
